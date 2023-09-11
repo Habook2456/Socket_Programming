@@ -19,15 +19,6 @@ using namespace std;
 
 char type_message;
 
-map<char, string> actions = {{'N', "Nickname"},
-							 {'M', "Message"},
-							 {'B', "Broadcast"},
-							 {'L', "List of users"},
-							 {'R', "Close session"},
-							 {'F', "Send a file"},
-							 {'T', "Temp action"},
-							 {'A', "Actions"}};
-
 struct IClients
 {
 	int s_id;
