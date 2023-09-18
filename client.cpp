@@ -14,6 +14,9 @@
 #include <vector>
 #include <map>
 #include <sstream>
+#include <iomanip>
+#include <fstream>
+#include <openssl/sha.h>
 
 #define STR_LENGTH 256
 
@@ -26,22 +29,45 @@ map<char, string> actions = {
 
 string global_response;
 
-string complete_digits(int t, bool type)
+string complete_digits(int t, int digits)
 {
-	if (type)
+	std::ostringstream oss;
+	oss << std::setw(digits) << std::setfill('0') << t;
+	return oss.str();
+}
+
+// Función para calcular el hash SHA-256 de un archivo
+std::string calculateSHA256(string filename)
+{
+	std::ifstream file(filename, std::ios::binary);
+	if (!file)
 	{
-		if (t < 10)
-			return ('0' + to_string(t));
-		return to_string(t);
+		perror("Error al abrir el archivo");
+		exit(EXIT_FAILURE);
 	}
-	else
+
+	SHA256_CTX sha256;
+	SHA256_Init(&sha256);
+
+	char buffer[1024];
+	while (file.read(buffer, sizeof(buffer)))
 	{
-		if (t < 10)
-			return ("00" + to_string(t));
-		else if (t < 100)
-			return ('0' + to_string(t));
-		return to_string(t);
+		SHA256_Update(&sha256, buffer, file.gcount());
 	}
+
+	unsigned char hash[SHA256_DIGEST_LENGTH];
+	SHA256_Final(hash, &sha256);
+
+	std::string result;
+	for (int i = 0; i < SHA256_DIGEST_LENGTH; i++)
+	{
+		char buf[3];
+		snprintf(buf, sizeof(buf), "%02x", hash[i]);
+		result += buf;
+	}
+
+	file.close();
+	return result;
 }
 
 void readMessage(int SocketFD)
@@ -149,7 +175,7 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
-	string nickname, block, nick_friend, message;
+	string nickname, block, nick_friend, message, file_name;
 
 	thread(readMessage, SocketFD).detach();
 
@@ -157,7 +183,7 @@ int main(int argc, char *argv[])
 	option = 'N';
 	cout << "Write your nickname to get started: ";
 	cin >> nickname;
-	block = option + complete_digits(nickname.size(), 1) + nickname;
+	block = option + complete_digits(nickname.size(), 2) + nickname;
 
 	n = send(SocketFD, &(block.front()), block.size(), 0);
 	block.clear();
@@ -167,8 +193,9 @@ int main(int argc, char *argv[])
 	cout << "Chat Options:" << endl;
 	cout << "1. Send a message (M)" << endl;
 	cout << "2. Broadcast a message (W)" << endl;
-	cout << "3. List users (L)" << endl;
-	cout << "4. Quit (Q)" << endl;
+	cout << "3. Send a file (F)" << endl;
+	cout << "4. List users (L)" << endl;
+	cout << "5. Quit (Q)" << endl;
 
 	while (option != 'R')
 	{
@@ -184,11 +211,12 @@ int main(int argc, char *argv[])
 			cin.ignore();
 			getline(cin, message);
 
-			block = option + complete_digits(nick_friend.size(), 1) + nick_friend + complete_digits(message.size(), 0) + message;
+			block = option + complete_digits(nick_friend.size(), 2) + nick_friend + complete_digits(message.size(), 3) + message;
 			n = send(SocketFD, block.c_str(), block.size(), 0);
 
 			block.clear();
 			message.clear();
+			nick_friend.clear();
 		}
 		else if (option == 'C')
 		{
@@ -199,7 +227,7 @@ int main(int argc, char *argv[])
 			cout << "Write your message: ";
 			cin.ignore();
 			getline(cin, message);
-			block = "W" + complete_digits(message.size(), 0) + message;
+			block = "W" + complete_digits(message.size(), 2) + message;
 
 			n = send(SocketFD, &(block.front()), block.size(), 0);
 
@@ -207,18 +235,67 @@ int main(int argc, char *argv[])
 		}
 		else if (option == 'L')
 		{
-			block = "L" + complete_digits(0, 1);
+			block = "L" + complete_digits(0, 2);
 			n = send(SocketFD, &(block.front()), block.size(), 0);
 
 			block.clear();
 		}
 		else if (option == 'Q')
 		{
-			block = "Q" + complete_digits(0, 1);
+			block = "Q" + complete_digits(0, 2);
 			n = send(SocketFD, &(block.front()), block.size(), 0);
 
 			block.clear();
 			break;
+		}
+		else if (option == 'F')
+		{
+			cout << "Enter your friend's nickname: ";
+			cin >> nick_friend;
+
+			cout << "Enter the file name: ";
+			cin.ignore();
+			getline(cin, file_name);
+
+			ifstream file(file_name, ios::binary);
+
+			if (!file.is_open())
+			{
+				cout << "File not found" << endl;
+				continue;
+			}
+
+			file.seekg(0, std::ios::end);
+			std::streampos file_size = file.tellg();
+			cout << "TAMANO DEL ARCHIVO: " << file_size << endl;
+			file.seekg(0, std::ios::beg);
+
+			cout << "Start sending file" << endl;
+			int count = 0;
+			char file_buffer[2048];
+			file.read(file_buffer, sizeof(file_buffer));
+
+			block = option +
+					complete_digits(nick_friend.size(), 2) +
+					nick_friend +
+					complete_digits(file_name.size(), 5) +
+					file_name +
+					complete_digits(sizeof(file_buffer), 10) +
+					file_buffer;
+
+			// cout << "SHA: " << calculateSHA256(file_name) << endl;
+
+			if (send(SocketFD, &(block.front()), block.size(), 0) == -1)
+			{
+				perror("Error al enviar el archivo");
+				break;
+			}
+
+			cout << "Finish sending file" << endl;
+
+			file.close();
+			nick_friend.clear();
+			block.clear();
 		}
 		else
 		{

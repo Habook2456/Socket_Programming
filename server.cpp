@@ -11,7 +11,12 @@
 #include <iostream>
 #include <vector>
 #include <map>
+#include <sstream>
 #include <thread>
+#include <chrono>
+#include <iomanip>
+#include <openssl/sha.h>
+#include <fstream>
 
 #define STR_LENGTH 256
 
@@ -29,28 +34,51 @@ struct IClients
 // clients vector
 vector<IClients> m_clients;
 
-string complete_digits(int t, bool type)
+string complete_digits(int t, int digits)
 {
-	if (type)
+	std::ostringstream oss;
+	oss << std::setw(digits) << std::setfill('0') << t;
+	return oss.str();
+}
+
+// Función para calcular el hash SHA-256 de un archivo
+std::string calculateSHA256(const char *filename)
+{
+	std::ifstream file(filename, std::ios::binary);
+	if (!file)
 	{
-		if (t < 10)
-			return ('0' + std::to_string(t));
-		return std::to_string(t);
+		perror("Error al abrir el archivo");
+		exit(EXIT_FAILURE);
 	}
-	else
+
+	SHA256_CTX sha256;
+	SHA256_Init(&sha256);
+
+	char buffer[1024];
+	while (file.read(buffer, sizeof(buffer)))
 	{
-		if (t < 10)
-			return ("00" + std::to_string(t));
-		else if (t < 100)
-			return ('0' + std::to_string(t));
-		return std::to_string(t);
+		SHA256_Update(&sha256, buffer, file.gcount());
 	}
+
+	unsigned char hash[SHA256_DIGEST_LENGTH];
+	SHA256_Final(hash, &sha256);
+
+	std::string result;
+	for (int i = 0; i < SHA256_DIGEST_LENGTH; i++)
+	{
+		char buf[3];
+		snprintf(buf, sizeof(buf), "%02x", hash[i]);
+		result += buf;
+	}
+
+	file.close();
+	return result;
 }
 
 void processProtocol(IClients client)
 {
-	int n, m, size_friend_nick, size_message;
-	char action, client_buffer[STR_LENGTH];
+	int n, m, size_friend_nick, size_message, size_filename, size_content;
+	char action, client_buffer[STR_LENGTH], file_buffer[1024];
 	string block;
 	while (1)
 	{
@@ -85,7 +113,7 @@ void processProtocol(IClients client)
 			if (sd_friend == -1)
 			{
 				string response = "friend's nickname not found";
-				block = "S" + complete_digits(response.size(), 0) + response;
+				block = "S" + complete_digits(response.size(), 2) + response;
 				n = send(client.s_id, &(block.front()), block.size(), 0);
 
 				cout << response << endl;
@@ -93,7 +121,7 @@ void processProtocol(IClients client)
 			}
 
 			// send message to friend
-			block = "M" + complete_digits(client.s_name.size(), 1) + client.s_name + complete_digits(size_message, 0) + message;
+			block = "M" + complete_digits(client.s_name.size(), 2) + client.s_name + complete_digits(size_message, 3) + message;
 			n = send(sd_friend, &(block.front()), block.size(), 0);
 
 			block.clear();
@@ -111,7 +139,7 @@ void processProtocol(IClients client)
 			{
 				if (i.s_id != client.s_id)
 				{
-					block = "M" + complete_digits(client.s_name.size(), 1) + client.s_name + complete_digits(message.size(), 0) + message;
+					block = "M" + complete_digits(client.s_name.size(), 2) + client.s_name + complete_digits(message.size(), 3) + message;
 					n = send(i.s_id, &(block.front()), block.size(), 0);
 				}
 			}
@@ -133,8 +161,50 @@ void processProtocol(IClients client)
 				clients.pop_back();
 			}
 
-			block = "L" + complete_digits(m_clients.size(), 1) + clients;
+			block = "L" + complete_digits(m_clients.size(), 3) + clients;
 			n = send(client.s_id, &(block.front()), block.size(), 0);
+			block.clear();
+		}
+		else if (action == 'F')
+		{
+			cout << "file processing" << endl;
+			// parse size of friend's nickname and size of message
+			string size_friend_nick_str(client_buffer, 1, 2);
+			size_friend_nick = atoi(&size_friend_nick_str.front());
+			string size_filename_str(client_buffer, 3 + size_friend_nick, 5);
+			size_filename = atoi(&size_filename_str.front());
+			string size_content_str(client_buffer, 3 + size_friend_nick + 5 + size_filename, 10);
+			size_content = atoi(&size_content_str.front());
+
+			// parse friend's nickname and message
+			string nickname_friend(client_buffer, 3, size_friend_nick);
+			string filename(client_buffer, 3 + size_friend_nick + 5, size_filename);
+			string content(client_buffer, 3 + size_friend_nick + 5 + size_filename + 10, size_content);
+			// Agregar "_received" al nombre del archivo antes de la extensión
+			size_t dotPos = filename.find_last_of(".");
+			if (dotPos != string::npos)
+			{
+				filename = filename.substr(0, dotPos) + "_received" + filename.substr(dotPos);
+			}
+			else
+			{
+				filename = filename + "_received";
+			}
+
+			cout << "Modified filename: " << filename << endl;
+
+			// Abrir un archivo para escribir los datos recibidos
+			std::ofstream outputFile(filename, std::ios::binary);
+			outputFile.write(&(content.front()), size_content);
+
+			/*
+			n = recv(client.s_id, client_buffer, sizeof(client_buffer), 0);
+			client_buffer[n] = '\0';
+			action = client_buffer[0];
+			*/
+
+			cout << "file processed" << endl;
+			outputFile.close();
 			block.clear();
 		}
 		else if (action == 'Q')
