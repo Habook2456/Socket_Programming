@@ -17,6 +17,9 @@
 #include <iomanip>
 #include <fstream>
 #include <openssl/sha.h>
+#include <openssl/bio.h>
+#include <openssl/evp.h>
+#include <openssl/buffer.h>
 
 #define STR_LENGTH 256
 
@@ -68,6 +71,47 @@ std::string calculateSHA256(string filename)
 
 	file.close();
 	return result;
+}
+
+char *base64_encode(const unsigned char *input, int length)
+{
+	BIO *bio, *b64;
+	BUF_MEM *bufferPtr;
+
+	b64 = BIO_new(BIO_f_base64());
+	bio = BIO_new(BIO_s_mem());
+
+	BIO_push(b64, bio);
+	BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
+	BIO_write(b64, input, length);
+	BIO_flush(b64);
+	BIO_get_mem_ptr(b64, &bufferPtr);
+
+	char *encoded_data = (char *)malloc(bufferPtr->length);
+	memcpy(encoded_data, bufferPtr->data, bufferPtr->length - 1);
+	encoded_data[bufferPtr->length - 1] = '\0';
+
+	BIO_free_all(b64);
+	return encoded_data;
+}
+
+#include <openssl/bio.h>
+#include <openssl/buffer.h>
+
+unsigned char *base64_decode(const char *input, int length, int *output_length)
+{
+	BIO *bio, *b64;
+	unsigned char *buffer = (unsigned char *)malloc(length);
+	memset(buffer, 0, length);
+
+	b64 = BIO_new(BIO_f_base64());
+	bio = BIO_new_mem_buf(input, length);
+	BIO_push(b64, bio);
+	BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
+	*output_length = BIO_read(b64, buffer, length);
+
+	BIO_free_all(b64);
+	return buffer;
 }
 
 void readMessage(int SocketFD)
@@ -275,14 +319,18 @@ int main(int argc, char *argv[])
 			char file_buffer[2048];
 			file.read(file_buffer, sizeof(file_buffer));
 
+			// Codificar el contenido del archivo en formato Base64
+			char *encoded_data = base64_encode(reinterpret_cast<const unsigned char *>(file_buffer), file.gcount());
+
 			block = option +
 					complete_digits(nick_friend.size(), 2) +
 					nick_friend +
 					complete_digits(file_name.size(), 5) +
 					file_name +
-					complete_digits(sizeof(file_buffer), 10) +
-					file_buffer;
+					complete_digits(strlen(encoded_data), 10) + // Usar strlen para obtener la longitud de la cadena codificada
+					encoded_data;								// Usar la cadena codificada en lugar del archivo sin procesar
 
+			cout <<  endl << block << endl;
 			// cout << "SHA: " << calculateSHA256(file_name) << endl;
 
 			if (send(SocketFD, &(block.front()), block.size(), 0) == -1)
@@ -296,6 +344,7 @@ int main(int argc, char *argv[])
 			file.close();
 			nick_friend.clear();
 			block.clear();
+			free(encoded_data);
 		}
 		else
 		{

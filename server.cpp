@@ -16,9 +16,12 @@
 #include <chrono>
 #include <iomanip>
 #include <openssl/sha.h>
+#include <openssl/bio.h>
+#include <openssl/evp.h>
+#include <openssl/buffer.h>
 #include <fstream>
 
-#define STR_LENGTH 256
+#define STR_LENGTH 4096
 
 using namespace std;
 
@@ -73,6 +76,45 @@ std::string calculateSHA256(const char *filename)
 
 	file.close();
 	return result;
+}
+
+char *base64_encode(const unsigned char *input, int length)
+{
+	BIO *bio, *b64;
+	BUF_MEM *bufferPtr;
+
+	b64 = BIO_new(BIO_f_base64());
+	BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
+	bio = BIO_new(BIO_s_mem());
+	bio = BIO_push(b64, bio);
+
+	BIO_write(bio, input, length);
+	BIO_flush(bio);
+	BIO_get_mem_ptr(bio, &bufferPtr);
+
+	char *encoded_data = (char *)malloc(bufferPtr->length);
+	memcpy(encoded_data, bufferPtr->data, bufferPtr->length - 1);
+	encoded_data[bufferPtr->length - 1] = '\0';
+
+	BIO_free_all(bio);
+	return encoded_data;
+}
+
+unsigned char *base64_decode(const char *input, int length, int *output_length)
+{
+	BIO *bio, *b64;
+	unsigned char *buffer = (unsigned char *)malloc(length);
+	memset(buffer, 0, length);
+
+	b64 = BIO_new(BIO_f_base64());
+	BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
+	bio = BIO_new_mem_buf(input, length);
+	bio = BIO_push(b64, bio);
+
+	*output_length = BIO_read(bio, buffer, length);
+
+	BIO_free_all(bio);
+	return buffer;
 }
 
 void processProtocol(IClients client)
@@ -167,6 +209,7 @@ void processProtocol(IClients client)
 		}
 		else if (action == 'F')
 		{
+			cout << client_buffer << endl;
 			cout << "file processing" << endl;
 			// parse size of friend's nickname and size of message
 			string size_friend_nick_str(client_buffer, 1, 2);
@@ -175,11 +218,16 @@ void processProtocol(IClients client)
 			size_filename = atoi(&size_filename_str.front());
 			string size_content_str(client_buffer, 3 + size_friend_nick + 5 + size_filename, 10);
 			size_content = atoi(&size_content_str.front());
-
+			cout << "TAMANO DEL ARCHIVO: " << size_content << endl;
 			// parse friend's nickname and message
 			string nickname_friend(client_buffer, 3, size_friend_nick);
 			string filename(client_buffer, 3 + size_friend_nick + 5, size_filename);
 			string content(client_buffer, 3 + size_friend_nick + 5 + size_filename + 10, size_content);
+			cout << content << endl;
+			// Decodificar el contenido en Base64
+			int decoded_length = 0;
+			unsigned char *decoded_data = base64_decode(content.c_str(), content.length(), &decoded_length);
+
 			// Agregar "_received" al nombre del archivo antes de la extensión
 			size_t dotPos = filename.find_last_of(".");
 			if (dotPos != string::npos)
@@ -192,10 +240,9 @@ void processProtocol(IClients client)
 			}
 
 			cout << "Modified filename: " << filename << endl;
-
 			// Abrir un archivo para escribir los datos recibidos
 			std::ofstream outputFile(filename, std::ios::binary);
-			outputFile.write(&(content.front()), size_content);
+			outputFile.write(reinterpret_cast<const char *>(decoded_data), decoded_length);
 
 			/*
 			n = recv(client.s_id, client_buffer, sizeof(client_buffer), 0);
@@ -206,6 +253,7 @@ void processProtocol(IClients client)
 			cout << "file processed" << endl;
 			outputFile.close();
 			block.clear();
+			free(decoded_data);
 		}
 		else if (action == 'Q')
 		{
