@@ -301,7 +301,7 @@ int main(int argc, char *argv[])
 			cin.ignore();
 			getline(cin, file_name);
 
-			ifstream file(file_name, ios::binary);
+			ifstream file(file_name, ios::in | ios::binary);
 
 			if (!file.is_open())
 			{
@@ -330,7 +330,7 @@ int main(int argc, char *argv[])
 					complete_digits(strlen(encoded_data), 10) + // Usar strlen para obtener la longitud de la cadena codificada
 					encoded_data;								// Usar la cadena codificada en lugar del archivo sin procesar
 
-			cout <<  endl << block << endl;
+			// cout <<  endl << block << endl;
 			// cout << "SHA: " << calculateSHA256(file_name) << endl;
 
 			if (send(SocketFD, &(block.front()), block.size(), 0) == -1)
